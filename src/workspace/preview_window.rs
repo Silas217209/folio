@@ -30,6 +30,7 @@ impl Render for DetachedPreview {
                 })
                 .size_full()
                 .on_action(cx.listener(Workspace::run_command))
+                .on_action(cx.listener(Workspace::show_compilation_errors))
                 .on_action(cx.listener(Workspace::zoom_out))
                 .on_action(cx.listener(Workspace::zoom_in))
                 .on_action(cx.listener(Workspace::zoom_reset))

@@ -95,16 +95,16 @@ impl Workspace {
 
     pub(super) fn show_first_error(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Prefer the current file; diagnostics can also point into an included file.
-        let target = std::iter::once(self.active)
-            .chain(0..self.documents.len())
-            .find_map(|index| {
-                let document = &self.documents[index];
-                self.lsp
-                    .diagnostics(&document.uri)
-                    .into_iter()
-                    .find(|d| d.severity == Some(lsp_types::DiagnosticSeverity::ERROR))
-                    .map(|d| (document.uri.clone(), d.range))
-            });
+        let current = &self.documents[self.active].uri;
+        let target = self
+            .lsp
+            .all_diagnostics()
+            .into_iter()
+            .filter(|(_, diagnostic)| {
+                diagnostic.severity == Some(lsp_types::DiagnosticSeverity::ERROR)
+            })
+            .min_by_key(|(uri, _)| uri != current)
+            .map(|(uri, diagnostic)| (uri, diagnostic.range));
         if let Some((uri, range)) = target {
             let main = self.main_window;
             let workspace = cx.weak_entity();

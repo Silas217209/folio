@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io::{self, BufRead, BufReader},
     net::TcpStream,
     path::PathBuf,
@@ -15,6 +15,7 @@ use reflexo::{
 };
 use reflexo_vec2svg::{SvgExportFeature, SvgExporter, SvgText};
 use serde_json::{Value, json};
+use tungstenite::client::IntoClientRequest;
 use tungstenite::{Message, WebSocket};
 
 pub use crate::runtime::TINYMIST_VERSION;
@@ -136,13 +137,97 @@ impl Drop for Server {
 type Socket = WebSocket<TcpStream>;
 type PageKey = (Fingerprint, u32, u32);
 
+/// Preserve multiline errors (including package/import failures) rather than
+/// just the final line containing "error:". Bound the report for a noisy server.
+#[derive(Default)]
+struct CompilerLog {
+    lines: VecDeque<String>,
+    bytes: usize,
+    truncated: bool,
+}
+
+impl CompilerLog {
+    const LIMIT: usize = 64 * 1024;
+
+    fn push(&mut self, line: &str) {
+        static ANSI: std::sync::LazyLock<regex::Regex> =
+            std::sync::LazyLock::new(|| regex::Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]").unwrap());
+        let line = ANSI.replace_all(line, "");
+        let mut line = line.trim_end().to_owned();
+        if line.is_empty() {
+            return;
+        }
+        if line.len() > Self::LIMIT {
+            let mut start = line.len() - Self::LIMIT;
+            while !line.is_char_boundary(start) {
+                start += 1;
+            }
+            line = line[start..].to_owned();
+            self.truncated = true;
+        }
+        self.bytes += line.len();
+        self.lines.push_back(line);
+        while self.bytes > Self::LIMIT {
+            self.bytes -= self.lines.pop_front().unwrap().len();
+            self.truncated = true;
+        }
+    }
+
+    fn drain(&mut self, receiver: &mpsc::Receiver<String>) -> bool {
+        let mut changed = false;
+        while let Ok(line) = receiver.try_recv() {
+            self.push(&line);
+            changed = true;
+        }
+        changed
+    }
+
+    fn finish(&mut self, receiver: &mpsc::Receiver<String>) {
+        // A child can exit before its stderr reader has been scheduled. Wait
+        // for that reader's final lines before reporting the startup failure.
+        while let Ok(line) = receiver.recv_timeout(Duration::from_millis(100)) {
+            self.push(&line);
+        }
+    }
+
+    fn report(&self, summary: &str) -> String {
+        if self.lines.is_empty() {
+            return summary.to_owned();
+        }
+        let omitted = if self.truncated {
+            "[Earlier compiler output omitted]\n"
+        } else {
+            ""
+        };
+        format!(
+            "{summary}\n\n{omitted}{}",
+            self.lines
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
 fn connect(address: &str) -> Result<Socket, String> {
     let stream = TcpStream::connect(address).map_err(|error| error.to_string())?;
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|error| error.to_string())?;
-    let (socket, _) = tungstenite::client(format!("ws://{address}/"), stream)
+    let mut request = format!("ws://{address}/")
+        .into_client_request()
         .map_err(|error| error.to_string())?;
+    request.headers_mut().insert(
+        tungstenite::http::header::ORIGIN,
+        tungstenite::http::HeaderValue::from_str(&format!("http://{address}"))
+            .map_err(|error| error.to_string())?,
+    );
+    let (socket, _) = tungstenite::client(request, stream).map_err(|error| error.to_string())?;
     socket
         .get_ref()
         .set_read_timeout(None)
@@ -173,15 +258,17 @@ fn run(
     requests: mpsc::Receiver<Request>,
     events: &async_channel::Sender<PreviewEvent>,
 ) -> Result<(), String> {
-    let child = crate::runtime::tinymist_command()
+    let mut command = crate::runtime::tinymist_command();
+    let executable = PathBuf::from(command.get_program());
+    let child = command
         .arg("preview").arg(root.join(entry))
         .arg("--root").arg(&root)
         .args(["--no-open", "--data-plane-host", "127.0.0.1:0", "--control-plane-host", "127.0.0.1:0"])
         .current_dir(&root).stdout(Stdio::null()).stderr(Stdio::piped()).spawn()
-        .map_err(|error| format!("Could not start Tinymist: {error}. Run scripts/install-tinymist.sh or set TINYMIST to a {TINYMIST_VERSION} binary."))?;
+        .map_err(|error| format!("Could not start Tinymist at {}:\n{error}\nFolio expects Tinymist {TINYMIST_VERSION}.", executable.display()))?;
     let mut server = Server(child);
     let stderr = server.0.stderr.take().unwrap();
-    let (logs_tx, logs) = mpsc::channel();
+    let (logs_tx, logs) = mpsc::sync_channel(256);
     thread::spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
             if logs_tx.send(line).is_err() {
@@ -189,197 +276,210 @@ fn run(
             }
         }
     });
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let (mut control_address, mut data_address) = (None, None);
-    let mut initial: HashMap<_, _> = files.into_iter().collect();
-    let mut pending_location = None;
-    while control_address.is_none() || data_address.is_none() {
-        while let Ok(request) = requests.try_recv() {
-            match request {
-                Request::Stop => return Ok(()),
-                Request::Update(path, text, location) => {
-                    initial.insert(path, text);
-                    pending_location = location;
+    let mut compiler_log = CompilerLog::default();
+    let result = (|| {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let (mut control_address, mut data_address) = (None, None);
+        let mut initial: HashMap<_, _> = files.into_iter().collect();
+        let mut pending_location = None;
+        while control_address.is_none() || data_address.is_none() {
+            while let Ok(request) = requests.try_recv() {
+                match request {
+                    Request::Stop => return Ok(()),
+                    Request::Update(path, text, location) => {
+                        initial.insert(path, text);
+                        pending_location = location;
+                    }
+                    Request::Refresh => {}
                 }
-                Request::Refresh => {}
             }
-        }
-        if Instant::now() > deadline {
-            return Err("Tinymist did not start its preview server within 15 seconds.".into());
-        }
-        if let Some(status) = server.0.try_wait().map_err(|error| error.to_string())? {
-            return Err(format!("Tinymist exited during startup: {status}"));
-        }
-        if let Ok(line) = logs.recv_timeout(Duration::from_millis(20)) {
-            if let Some((_, address)) = line.split_once("Control panel server listening on: ") {
-                control_address = Some(address.trim().to_owned());
+            if Instant::now() > deadline {
+                return Err("Tinymist did not start its preview server within 15 seconds.".into());
             }
-            if let Some((_, address)) = line.split_once("Data plane server listening on: ") {
-                data_address = Some(address.trim().to_owned());
+            if let Some(status) = server.0.try_wait().map_err(|error| error.to_string())? {
+                compiler_log.finish(&logs);
+                return Err(format!("Tinymist exited during startup: {status}"));
             }
-        }
-    }
-    let mut control = connect(&control_address.unwrap())?;
-    let mut data = connect(&data_address.unwrap())?;
-    let initial: HashMap<_, _> = initial
-        .into_iter()
-        .map(|(path, text)| (root.join(path), text))
-        .collect();
-    write(
-        &mut control,
-        Message::text(json!({"event":"syncMemoryFiles", "files":initial}).to_string()),
-    )?;
-    write(&mut data, Message::text("current"))?;
-    let mut doc = IncrDocClient::default();
-    let mut pages: HashMap<PageKey, Arc<VectorPage>> = HashMap::new();
-    let mut diagnostics = String::new();
-    let mut compiled = false;
-    let mut frame_received = false;
-    let mut latest_location = pending_location.clone();
-    let mut document_signature = Vec::new();
-    // Jump replies carry no request ID. Keep one query in flight and tag its
-    // result with the originating edit revision so the UI can reject old edits.
-    let mut in_flight: Option<(EditLocation, Instant)> = None;
-    loop {
-        let mut edits = HashMap::new();
-        while let Ok(request) = requests.try_recv() {
-            match request {
-                Request::Stop => return Ok(()),
-                Request::Update(path, text, location) => {
-                    edits.insert(root.join(path), text);
-                    latest_location = location.clone();
-                    pending_location = location;
-                    compiled = false;
-                    frame_received = false;
+            if let Ok(line) = logs.recv_timeout(Duration::from_millis(20)) {
+                compiler_log.push(&line);
+                if let Some((_, address)) = line.split_once("Control panel server listening on: ") {
+                    control_address = Some(address.trim().to_owned());
                 }
-                Request::Refresh => write(&mut data, Message::text("current"))?,
+                if let Some((_, address)) = line.split_once("Data plane server listening on: ") {
+                    data_address = Some(address.trim().to_owned());
+                }
             }
         }
-        if !edits.is_empty() {
-            write(
-                &mut control,
-                Message::text(json!({"event":"updateMemoryFiles", "files":edits}).to_string()),
-            )?;
-        }
-        for socket in [&mut control, &mut data] {
-            if let Err(error) = socket.flush()
-                && !would_block(&error)
-            {
-                return Err(error.to_string());
-            }
-        }
-        while let Ok(line) = logs.try_recv() {
-            if line.contains("error:") {
-                diagnostics = line.replace(&format!("{}/", root.display()), "");
-            }
-        }
+        let mut control = connect(&control_address.unwrap())?;
+        let mut data = connect(&data_address.unwrap())?;
+        let initial: HashMap<_, _> = initial
+            .into_iter()
+            .map(|(path, text)| (root.join(path), text))
+            .collect();
+        write(
+            &mut control,
+            Message::text(json!({"event":"syncMemoryFiles", "files":initial}).to_string()),
+        )?;
+        write(&mut data, Message::text("current"))?;
+        let mut doc = IncrDocClient::default();
+        let mut pages: HashMap<PageKey, Arc<VectorPage>> = HashMap::new();
+        let mut compile_failed = false;
+        let mut compiled = false;
+        let mut frame_received = false;
+        let mut latest_location = pending_location.clone();
+        let mut document_signature = Vec::new();
+        // Jump replies carry no request ID. Keep one query in flight and tag its
+        // result with the originating edit revision so the UI can reject old edits.
+        let mut in_flight: Option<(EditLocation, Instant)> = None;
         loop {
-            match control.read() {
-                Ok(Message::Text(text)) => {
-                    if let Ok(value) = serde_json::from_str::<Value>(&text) {
-                        match value.get("kind").and_then(Value::as_str) {
-                            Some("Compiling") => {
-                                compiled = false;
-                                let _ = events.try_send(PreviewEvent::Compiling);
+            let mut edits = HashMap::new();
+            while let Ok(request) = requests.try_recv() {
+                match request {
+                    Request::Stop => return Ok(()),
+                    Request::Update(path, text, location) => {
+                        edits.insert(root.join(path), text);
+                        latest_location = location.clone();
+                        pending_location = location;
+                        compiled = false;
+                        frame_received = false;
+                        compile_failed = false;
+                        compiler_log.clear();
+                    }
+                    Request::Refresh => write(&mut data, Message::text("current"))?,
+                }
+            }
+            if !edits.is_empty() {
+                write(
+                    &mut control,
+                    Message::text(json!({"event":"updateMemoryFiles", "files":edits}).to_string()),
+                )?;
+            }
+            for socket in [&mut control, &mut data] {
+                if let Err(error) = socket.flush()
+                    && !would_block(&error)
+                {
+                    return Err(error.to_string());
+                }
+            }
+            if compiler_log.drain(&logs) && compile_failed {
+                let _ = events.try_send(PreviewEvent::Error(
+                    compiler_log.report("Compilation failed."),
+                ));
+            }
+            loop {
+                match control.read() {
+                    Ok(Message::Text(text)) => {
+                        if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                            match value.get("kind").and_then(Value::as_str) {
+                                Some("Compiling") => {
+                                    compiled = false;
+                                    compile_failed = false;
+                                    let _ = events.try_send(PreviewEvent::Compiling);
+                                }
+                                Some("CompileSuccess") => {
+                                    compiled = true;
+                                    compile_failed = false;
+                                    compiler_log.clear();
+                                    events
+                                        .send_blocking(PreviewEvent::Compiled)
+                                        .map_err(|error| error.to_string())?;
+                                }
+                                Some("CompileError") => {
+                                    compiled = false;
+                                    compile_failed = true;
+                                    compiler_log.drain(&logs);
+                                    let message = compiler_log.report("Compilation failed.");
+                                    events
+                                        .send_blocking(PreviewEvent::Error(message))
+                                        .map_err(|error| error.to_string())?;
+                                }
+                                _ => {}
                             }
-                            Some("CompileSuccess") => {
-                                compiled = true;
-                                events
-                                    .send_blocking(PreviewEvent::Compiled)
-                                    .map_err(|error| error.to_string())?;
-                            }
-                            Some("CompileError") => {
-                                compiled = false;
-                                let message = if diagnostics.is_empty() {
-                                    "Compilation failed.".into()
-                                } else {
-                                    diagnostics.clone()
-                                };
-                                events
-                                    .send_blocking(PreviewEvent::Error(message))
-                                    .map_err(|error| error.to_string())?;
-                            }
-                            _ => {}
                         }
                     }
+                    Ok(Message::Close(_)) => {
+                        return Err("Tinymist closed the control connection.".into());
+                    }
+                    Ok(_) => {}
+                    Err(error) if would_block(&error) => break,
+                    Err(error) => return Err(error.to_string()),
                 }
-                Ok(Message::Close(_)) => {
-                    return Err("Tinymist closed the control connection.".into());
-                }
-                Ok(_) => {}
-                Err(error) if would_block(&error) => break,
-                Err(error) => return Err(error.to_string()),
             }
-        }
-        loop {
-            match data.read() {
-                Ok(Message::Binary(bytes)) => {
-                    if bytes.starts_with(b"jump,") {
-                        if let Some((location, _)) = in_flight.take()
-                            && let Some(position) = parse_jump(&bytes, location.revision)
-                        {
+            loop {
+                match data.read() {
+                    Ok(Message::Binary(bytes)) => {
+                        if bytes.starts_with(b"jump,") {
+                            if let Some((location, _)) = in_flight.take()
+                                && let Some(position) = parse_jump(&bytes, location.revision)
+                            {
+                                events
+                                    .send_blocking(PreviewEvent::Follow(position))
+                                    .map_err(|error| error.to_string())?;
+                            }
+                        } else if apply_frame(&mut doc, &bytes)? {
+                            let next = render_pages(&doc, &mut pages)?;
+                            let signature: Vec<_> = next
+                                .pages
+                                .iter()
+                                .map(|page| {
+                                    (page.id, page.width().to_bits(), page.height().to_bits())
+                                })
+                                .collect();
+                            if signature != document_signature {
+                                // Compilation can overtake a pending location query
+                                // during fast typing. Resolve the latest edit again
+                                // when the rendered document actually changes.
+                                pending_location = latest_location.clone();
+                                document_signature = signature;
+                            }
+                            frame_received = true;
                             events
-                                .send_blocking(PreviewEvent::Follow(position))
+                                .send_blocking(PreviewEvent::Document(next))
                                 .map_err(|error| error.to_string())?;
                         }
-                    } else if apply_frame(&mut doc, &bytes)? {
-                        let next = render_pages(&doc, &mut pages)?;
-                        let signature: Vec<_> = next
-                            .pages
-                            .iter()
-                            .map(|page| (page.id, page.width().to_bits(), page.height().to_bits()))
-                            .collect();
-                        if signature != document_signature {
-                            // Compilation can overtake a pending location query
-                            // during fast typing. Resolve the latest edit again
-                            // when the rendered document actually changes.
-                            pending_location = latest_location.clone();
-                            document_signature = signature;
-                        }
-                        frame_received = true;
-                        events
-                            .send_blocking(PreviewEvent::Document(next))
-                            .map_err(|error| error.to_string())?;
                     }
+                    Ok(Message::Close(_)) => {
+                        return Err("Tinymist closed the preview connection.".into());
+                    }
+                    Ok(_) => {}
+                    Err(error) if would_block(&error) => break,
+                    Err(error) => return Err(error.to_string()),
                 }
-                Ok(Message::Close(_)) => {
-                    return Err("Tinymist closed the preview connection.".into());
-                }
-                Ok(_) => {}
-                Err(error) if would_block(&error) => break,
-                Err(error) => return Err(error.to_string()),
             }
+            // Comments and whitespace can have no rendered position and therefore
+            // no reply. Allow a subsequent edit to request a location in that case.
+            if in_flight
+                .as_ref()
+                .is_some_and(|(_, sent)| sent.elapsed() > Duration::from_millis(350))
+            {
+                in_flight = None;
+            }
+            if compiled
+                && frame_received
+                && in_flight.is_none()
+                && let Some(location) = pending_location.take()
+            {
+                write(
+                    &mut control,
+                    Message::text(
+                        json!({
+                            "event": "panelScrollTo", "filepath": root.join(&location.path),
+                            "line": location.line, "character": location.character,
+                        })
+                        .to_string(),
+                    ),
+                )?;
+                in_flight = Some((location, Instant::now()));
+            }
+            if let Some(status) = server.0.try_wait().map_err(|error| error.to_string())? {
+                compiler_log.finish(&logs);
+                return Err(format!("Tinymist exited: {status}"));
+            }
+            thread::sleep(Duration::from_millis(2));
         }
-        // Comments and whitespace can have no rendered position and therefore
-        // no reply. Allow a subsequent edit to request a location in that case.
-        if in_flight
-            .as_ref()
-            .is_some_and(|(_, sent)| sent.elapsed() > Duration::from_millis(350))
-        {
-            in_flight = None;
-        }
-        if compiled
-            && frame_received
-            && in_flight.is_none()
-            && let Some(location) = pending_location.take()
-        {
-            write(
-                &mut control,
-                Message::text(
-                    json!({
-                        "event": "panelScrollTo", "filepath": root.join(&location.path),
-                        "line": location.line, "character": location.character,
-                    })
-                    .to_string(),
-                ),
-            )?;
-            in_flight = Some((location, Instant::now()));
-        }
-        if let Some(status) = server.0.try_wait().map_err(|error| error.to_string())? {
-            return Err(format!("Tinymist exited: {status}"));
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
+    })();
+    compiler_log.drain(&logs);
+    result.map_err(|error| compiler_log.report(&error))
 }
 
 fn parse_jump(bytes: &[u8], revision: u64) -> Option<PreviewLocation> {
@@ -462,6 +562,39 @@ fn render_pages(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compiler_reports_keep_multiline_context_and_bound_terminal_output() {
+        let mut log = CompilerLog::default();
+        log.push("\x1b[31merror:\x1b[0m could not download package");
+        log.push("  --> lib/rechnung.typ:3:1");
+        log.push("  caused by: certificate verification failed");
+        let report = log.report("Compilation failed.");
+        assert!(report.contains("lib/rechnung.typ:3:1"));
+        assert!(report.contains("certificate verification failed"));
+        assert!(!report.contains('\x1b'));
+        log.push(&"ä".repeat(CompilerLog::LIMIT));
+        log.push("last error: permission denied");
+        assert!(log.bytes <= CompilerLog::LIMIT);
+        assert!(
+            log.report("Stopped")
+                .contains("last error: permission denied")
+        );
+        log.clear();
+        assert_eq!(log.report("Compilation failed."), "Compilation failed.");
+
+        let (sender, receiver) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(5));
+            sender.send("Fatal startup reason".to_owned()).unwrap();
+        });
+        log.finish(&receiver);
+        reader.join().unwrap();
+        assert!(
+            log.report("Tinymist exited")
+                .contains("Fatal startup reason")
+        );
+    }
 
     #[test]
     fn disconnected_compiler_requests_report_errors() {

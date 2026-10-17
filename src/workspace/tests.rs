@@ -1,6 +1,7 @@
 use super::*;
 
 use gpui_kit::InputEvent as _;
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::test::TestWindowExt;
 use std::{
     sync::Arc,
@@ -1081,7 +1082,7 @@ fn source_diagnostics_mark_closed_files_and_clear_after_recovery() {
         let main = workspace.read(cx).documents[0].editor.clone();
         main.update(cx, |state, cx| {
             state.replace_all(
-                "= Diagnostic demo\n\n#include \"chapters/model.typ\"",
+                "#set page(width: 420pt, height: 600pt)\n= Diagnostic demo\n\n#include \"chapters/model.typ\"",
                 window,
                 cx,
             )
@@ -1091,6 +1092,9 @@ fn source_diagnostics_mark_closed_files_and_clear_after_recovery() {
     wait_language(&mut app, &workspace, |view, cx| {
         !view.compiling
             && view.compile_error.is_none()
+            // Status and vector frames arrive on separate sockets. Wait for
+            // the replacement document, not a status for the previous frame.
+            && view.preview.as_ref().is_some_and(|preview| preview.pages[0].width() == 420.)
             && view.documents[0]
                 .editor
                 .read(cx)
@@ -1135,6 +1139,12 @@ fn source_diagnostics_mark_closed_files_and_clear_after_recovery() {
     settle_surface(&mut app, handle);
     app.update_window(handle, |_, window, cx| window.click("preview-warning", cx))
         .unwrap();
+    settle_surface(&mut app, handle);
+    app.update_window(handle, |_, window, cx| {
+        assert!(window.find("compile-errors").visible());
+        window.click("compilation-error-source", cx);
+    })
+    .unwrap();
     settle_surface(&mut app, handle);
     let (message_origin, viewport, window_size) = app
         .update_window(handle, |_, window, cx| {
@@ -1188,6 +1198,7 @@ fn source_diagnostics_mark_closed_files_and_clear_after_recovery() {
         window.click("preview-warning", cx);
         let child = workspace.read(cx).documents[2].editor.clone();
         assert_eq!(child.read(cx).cursor_position().line, 45);
+        window.close_dialog(cx);
         child.update(cx, |state, cx| {
             state.replace_all(
                 "#set text(font: \"folio-unavailable-font-for-test\")\nWarning example.",
@@ -1801,4 +1812,135 @@ fn status_cursor_fit_resize_and_live_detached_preview() {
         .unwrap();
     app.run_until_parked();
     assert_eq!(app.update(|cx| cx.windows().len()), 0);
+}
+
+#[::core::prelude::v1::test]
+fn compilation_dialog_reports_unopened_invoice_imports_and_backend_failures() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Invoice Library With Spaces");
+    for (entry, contents) in [
+        (
+            "templates/Rechnung.typ",
+            include_str!("../../templates/invoice-pro/templates/Rechnung.typ"),
+        ),
+        (
+            "lib/rechnung.typ",
+            include_str!("../../templates/invoice-pro/lib/rechnung.typ"),
+        ),
+        (
+            "lib/kontakte.typ",
+            include_str!("../../templates/invoice-pro/lib/kontakte.typ"),
+        ),
+    ] {
+        let path = root.join(entry);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+    let template = crate::invoice::templates(&root).unwrap().remove(0);
+    let entry = crate::invoice::create(&root, &template, "1", "First invoice").unwrap();
+    let contacts = root.join("lib/kontakte.typ");
+    let valid_contacts = fs::read_to_string(&contacts).unwrap();
+    fs::write(
+        &contacts,
+        format!("{valid_contacts}\n#let broken = missing_contact_for_test\n"),
+    )
+    .unwrap();
+    let contacts_uri = lsp::file_uri(&contacts);
+    let project = crate::project::Project::document(&entry).unwrap();
+    let mut app = HeadlessAppContext::with_platform(
+        platform::current_platform(true).text_system(),
+        Arc::new(crate::branding::Assets),
+        platform::current_headless_renderer,
+    );
+    app.update(|cx| {
+        init(cx);
+        crate::configure_theme(cx);
+    });
+    let (handle, workspace) = app
+        .update(|cx| {
+            open_window(
+                WindowOptions {
+                    show: false,
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| Workspace::open(project, window, cx)),
+            )
+        })
+        .unwrap();
+    wait_language(&mut app, &workspace, |view, _| {
+        view.compile_error.is_some()
+            && view.lsp.all_diagnostics().iter().any(|(uri, diagnostic)| {
+                uri == &contacts_uri && diagnostic.message.contains("missing_contact_for_test")
+            })
+    });
+    app.update(|cx| {
+        assert_eq!(
+            workspace.read(cx).documents.len(),
+            1,
+            "An imported module should not need an open source buffer to report errors"
+        )
+    });
+    settle_surface(&mut app, handle);
+    app.update_window(handle, |_, window, cx| window.click("preview-warning", cx))
+        .unwrap();
+    settle_surface(&mut app, handle);
+    if let Ok(path) = std::env::var("FOLIO_COMPILE_ERRORS_SCREENSHOT") {
+        app.capture_screenshot(handle).unwrap().save(path).unwrap();
+    }
+    app.update_window(handle, |_, window, cx| {
+        assert!(window.find("compile-errors").visible());
+        window.click("copy-compilation-errors", cx);
+        let details = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap();
+        assert!(details.contains("lib/kontakte.typ:"), "{details}");
+        assert!(details.contains("missing_contact_for_test"), "{details}");
+        window.click("compilation-error-source", cx);
+    })
+    .unwrap();
+    settle_surface(&mut app, handle);
+    app.update_window(handle, |_, window, cx| {
+        assert!(window.try_find("compile-errors").is_none());
+        let editor = workspace.update(cx, |view, _| {
+            assert_eq!(view.documents[view.active].path, "lib/kontakte.typ");
+            view.documents[view.active].editor.clone()
+        });
+        editor.update(cx, |editor, cx| {
+            editor.replace_all(valid_contacts, window, cx)
+        });
+    })
+    .unwrap();
+    wait_language(&mut app, &workspace, |view, _| {
+        view.preview.is_some()
+            && view.compile_error.is_none()
+            && view.lsp.diagnostics(&contacts_uri).is_empty()
+    });
+    app.update(|cx| {
+        workspace.update(cx, |view, cx| {
+            view.compile_error =
+                Some("Could not start Tinymist\nPermission denied: bundled tool".into());
+            cx.notify();
+        })
+    });
+    settle_surface(&mut app, handle);
+    app.update_window(handle, |_, window, cx| window.click("preview-warning", cx))
+        .unwrap();
+    settle_surface(&mut app, handle);
+    app.update_window(handle, |_, window, cx| {
+        window.click("copy-compilation-errors", cx);
+        let details = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap();
+        assert!(
+            details.contains("Permission denied: bundled tool"),
+            "{details}"
+        );
+        window.close_dialog(cx);
+        window.remove_window();
+    })
+    .unwrap();
+    app.run_until_parked();
 }

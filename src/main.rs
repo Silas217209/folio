@@ -31,6 +31,7 @@ actions!(
         Save,
         Quit,
         ShowLibrary,
+        ShowCompilationErrors,
         NewInvoice,
         OpenFolder,
         OpenContacts,

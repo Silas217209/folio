@@ -111,6 +111,10 @@ render when compilation fails. Errors appear in the source; zooming rerenders
 vectors at the requested resolution. Preview fit modes follow container size,
 and the preview can be detached into another window.
 
+Click the warning triangle beside the zoom control to see compilation errors,
+including errors in imported files and compiler startup output. The dialog has
+**Copy details** and **Go to source** actions.
+
 Tinymist provides completion, hover, signatures, diagnostics, definitions,
 references, rename, and formatting. Settings control Vim mode, autosave, wrapping,
 font size, indentation, line numbers, and source following. Standard application

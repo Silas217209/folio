@@ -31,6 +31,7 @@ use crate::{
 };
 
 pub(crate) mod commands;
+mod compilation;
 mod diagnostics;
 mod language;
 mod modal;
@@ -346,12 +347,19 @@ impl Workspace {
                                 version,
                                 diagnostics,
                             } => {
-                                if let Some(snapshot) = this.lsp.snapshot(&uri)
-                                    && version.is_none_or(|version| version == snapshot.version)
-                                {
+                                let snapshot = this.lsp.snapshot(&uri);
+                                // Imported files need not have editor buffers. Keep
+                                // their diagnostics too, while rejecting stale
+                                // versions for files whose buffers we do own.
+                                if snapshot.as_ref().is_none_or(|snapshot| {
+                                    version.is_none_or(|version| version == snapshot.version)
+                                }) {
                                     this.lsp.set_diagnostics(uri.clone(), diagnostics.clone());
-                                    if let Some(document) =
-                                        this.documents.iter().find(|document| document.uri == uri)
+                                    if let Some(snapshot) = snapshot
+                                        && let Some(document) = this
+                                            .documents
+                                            .iter()
+                                            .find(|document| document.uri == uri)
                                     {
                                         document.editor.update(cx, |state, cx| {
                                             let text = state.text().clone();
@@ -964,9 +972,13 @@ impl Workspace {
                                 .ghost()
                                 .small()
                                 .icon(Icon::new(IconName::TriangleAlert).text_color(rgb(0x946200)))
-                                .tooltip("Compilation failed")
+                                .tooltip("Show compilation errors")
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.show_first_error(window, cx)
+                                    this.show_compilation_errors(
+                                        &crate::ShowCompilationErrors,
+                                        window,
+                                        cx,
+                                    )
                                 })),
                         )
                     })
@@ -1094,6 +1106,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::recompile))
+            .on_action(cx.listener(Self::show_compilation_errors))
             .on_action(cx.listener(Self::close_active_tab))
             .on_action(cx.listener(Self::close_project))
             .on_action(cx.listener(Self::format_document))

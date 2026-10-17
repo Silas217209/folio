@@ -154,6 +154,22 @@ impl Client {
     pub fn set_diagnostics(&self, uri: String, diagnostics: Vec<Diagnostic>) {
         self.0.diagnostics.lock().unwrap().insert(uri, diagnostics);
     }
+    pub fn all_diagnostics(&self) -> Vec<(String, Diagnostic)> {
+        let mut result: Vec<_> = self
+            .0
+            .diagnostics
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|(uri, entries)| entries.iter().cloned().map(|entry| (uri.clone(), entry)))
+            .collect();
+        result.sort_by(|(a, x), (b, y)| {
+            a.cmp(b)
+                .then_with(|| x.range.start.line.cmp(&y.range.start.line))
+                .then_with(|| x.range.start.character.cmp(&y.range.start.character))
+        });
+        result
+    }
     pub fn notify(&self, method: &'static str, params: Value) {
         if self.0.sender.send(Request::Notify(method, params)).is_err() {
             let _ = self.0.events.try_send(Event::Error(format!(
