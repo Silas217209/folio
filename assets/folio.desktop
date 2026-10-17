@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Folio
+GenericName=Typst Editor
+Comment=Typst documents, templates, and a local invoice library
+Exec=folio %f
+TryExec=folio
+Icon=folio
+Terminal=false
+StartupNotify=true
+StartupWMClass=folio
+Categories=Office;WordProcessor;
+Keywords=Typst;notes;documents;invoices;

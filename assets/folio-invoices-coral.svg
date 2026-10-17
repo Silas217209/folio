@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Folio Invoices — Coral</title>
+  <desc>A plum serif F on layered cream pages, with a golden euro seal on a vibrant coral tile. Invoice app icon.</desc>
+  <defs>
+    <linearGradient id="tile" x1="222" y1="48" x2="796" y2="1004" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFA27E"/>
+      <stop offset=".48" stop-color="#FA6966"/>
+      <stop offset="1" stop-color="#DC4169"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="322" y1="180" x2="720" y2="850" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFEF6"/>
+      <stop offset="1" stop-color="#FFF0DA"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="405" y1="320" x2="620" y2="752" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#753B4D"/>
+      <stop offset="1" stop-color="#4C2943"/>
+    </linearGradient>
+    <linearGradient id="seal" x1="676" y1="656" x2="826" y2="866" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE7A6"/>
+      <stop offset=".5" stop-color="#F5C164"/>
+      <stop offset="1" stop-color="#E6A047"/>
+    </linearGradient>
+    <filter id="shadow" x="80" y="70" width="880" height="910" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#9A294D" flood-opacity=".19"/>
+    </filter>
+    <filter id="leaf-shadow" x="220" y="140" width="610" height="770" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#B15B4E" flood-opacity=".12"/>
+    </filter>
+    <filter id="seal-shadow" x="602" y="614" width="300" height="308" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="9" stdDeviation="8" flood-color="#9A3F4B" flood-opacity=".22"/>
+    </filter>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#tile)"/>
+  <rect x="34" y="34" width="956" height="956" rx="222" stroke="#FFF1DA" stroke-opacity=".3" stroke-width="4"/>
+  <path d="M128 284H896M128 760H896M236 142V882M788 142V882" stroke="#FFF0D7" stroke-opacity=".15" stroke-width="3"/>
+  <g filter="url(#shadow)">
+    <rect x="253" y="191" width="520" height="650" rx="48" transform="rotate(12 513 516)" fill="#E9A08B"/>
+    <rect x="229" y="181" width="538" height="664" rx="48" transform="rotate(-10 498 513)" fill="#FFE0AA"/>
+    <g filter="url(#leaf-shadow)">
+      <path d="M324 172H650L774 296V802C774 830 752 852 724 852H324C296 852 274 830 274 802V222C274 194 296 172 324 172Z" fill="url(#paper)"/>
+      <path d="M650 172V252C650 278 668 296 694 296H774L650 172Z" fill="#F1D6AC"/>
+      <path d="M356 320H665L674 432H658C646 361 626 344 559 344H486V530H529C574 530 586 512 593 468H609V623H593C586 574 574 554 529 554H486V701C486 725 500 732 539 732V752H348V732C390 732 404 725 404 701V368C404 344 390 338 356 338V320Z" fill="url(#ink)"/>
+      <path d="M350 790H535M350 812H484" stroke="#C89B87" stroke-opacity=".65" stroke-width="8" stroke-linecap="round"/>
+    </g>
+  </g>
+  <g filter="url(#seal-shadow)">
+    <circle cx="750" cy="762" r="110" fill="url(#seal)"/>
+    <circle cx="750" cy="762" r="107.5" stroke="#FFF3C6" stroke-opacity=".65" stroke-width="5"/>
+    <circle cx="750" cy="762" r="91" stroke="#A26A31" stroke-opacity=".25" stroke-width="2"/>
+    <path d="M790 708C780 698 769 694 756 694C727 694 708 721 708 762C708 803 727 830 756 830C769 830 780 826 790 816M692 748H766M692 775H758" stroke="#734035" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

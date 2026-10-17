@@ -1,0 +1,66 @@
+# Rust builds and distribution artifacts
+/target/
+/dist/
+/artifacts/
+/screenshots/
+/coverage/
+*.app/
+*.dSYM/
+*.dmg
+*.pdf
+/Folio-*.zip
+*.profraw
+*.profdata
+**/*.rs.bk
+
+# Local tools and reference checkouts
+/.context/
+
+# CI workflows are intentionally excluded from this repository.
+/.github/workflows/
+
+# Interpreter caches, editor state, and temporary files
+__pycache__/
+.pytest_cache/
+.cache/
+*.py[cod]
+/.idea/
+/.vscode/
+.DS_Store
+._*
+Thumbs.db
+*~
+*.swp
+*.swo
+*.tmp
+*.log
+
+# Local environment files and signing credentials
+.env
+.env.*
+!.env.example
+!.env.sample
+*.p12
+*.pfx
+*.p8
+*.cer
+*.pem
+*.key
+*.keychain
+*.keychain-db
+*.mobileprovision
+
+# A private invoice library must not become project source. Anchor its folders
+# at the repository root so bundled starter templates remain visible.
+.folio/
+/documents/
+/pdf/
+/lib/
+/data/
+/templates/*.typ
+/*.typ
+/settings.json
+/library.json
+
+# Cargo.lock, bundled fonts/licenses, starter templates, and test fixtures belong
+# in version control; keep them visible.

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Folio</title>
+  <desc>A serif F on warm ivory pages, set on a rounded teal tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="222" y1="48" x2="796" y2="1004" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#80DCC7"/>
+      <stop offset=".48" stop-color="#38B6AD"/>
+      <stop offset="1" stop-color="#158AA1"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="322" y1="180" x2="720" y2="850" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFEF7"/>
+      <stop offset="1" stop-color="#F2F0E4"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="405" y1="320" x2="620" y2="752" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#214B4A"/>
+      <stop offset="1" stop-color="#123C45"/>
+    </linearGradient>
+    <filter id="shadow" x="80" y="70" width="880" height="910" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#063D48" flood-opacity=".19"/>
+    </filter>
+    <filter id="leaf-shadow" x="220" y="140" width="610" height="770" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#1B605C" flood-opacity=".12"/>
+    </filter>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#tile)"/>
+  <rect x="34" y="34" width="956" height="956" rx="222" stroke="#E4FFF1" stroke-opacity=".28" stroke-width="4"/>
+  <path d="M128 284H896M128 760H896M236 142V882M788 142V882" stroke="#DAFFF0" stroke-opacity=".15" stroke-width="3"/>
+  <g filter="url(#shadow)">
+    <rect x="253" y="191" width="520" height="650" rx="48" transform="rotate(12 513 516)" fill="#B9D6BD"/>
+    <rect x="229" y="181" width="538" height="664" rx="48" transform="rotate(-10 498 513)" fill="#E1E8CE"/>
+    <g filter="url(#leaf-shadow)">
+      <path d="M324 172H650L774 296V802C774 830 752 852 724 852H324C296 852 274 830 274 802V222C274 194 296 172 324 172Z" fill="url(#paper)"/>
+      <path d="M650 172V252C650 278 668 296 694 296H774L650 172Z" fill="#D5E4D4"/>
+      <path d="M356 320H665L674 432H658C646 361 626 344 559 344H486V530H529C574 530 586 512 593 468H609V623H593C586 574 574 554 529 554H486V701C486 725 500 732 539 732V752H348V732C390 732 404 725 404 701V368C404 344 390 338 356 338V320Z" fill="url(#ink)"/>
+      <path d="M350 790H567" stroke="#A6B8A7" stroke-opacity=".65" stroke-width="8" stroke-linecap="round"/>
+      <circle cx="690" cy="790" r="6" fill="#56B8AE"/>
+    </g>
+  </g>
+</svg>
