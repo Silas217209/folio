@@ -306,13 +306,21 @@ impl Workspace {
         let uri = document.uri.clone();
         self.lsp
             .sync(&uri, document.editor.read(cx).value().as_ref());
+        let tab_width = self.settings.tab_width;
+        // Tinymist's typstyle formatter uses its configuration rather than the
+        // LSP FormattingOptions for indentation. Keep both in agreement.
+        self.lsp.notify(
+            "workspace/didChangeConfiguration",
+            serde_json::json!({ "settings": { "formatterIndentSize": tab_width } }),
+        );
         let versions = self.lsp.snapshots();
         let client = self.lsp.clone();
         self.language_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = client.request("textDocument/formatting", serde_json::json!({ "textDocument": { "uri": uri }, "options": { "tabSize": 2, "insertSpaces": true } })).await;
+            let result = client.request("textDocument/formatting", serde_json::json!({ "textDocument": { "uri": uri }, "options": { "tabSize": tab_width, "insertSpaces": true } })).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 let result = result.and_then(|value| {
                     let edits: Vec<lsp_types::TextEdit> = if value.is_null() { vec![] } else { serde_json::from_value(value)? };
+                    if edits.is_empty() { return Ok(()); }
                     let edit = serde_json::from_value(serde_json::json!({ "changes": { uri: edits } }))?;
                     this.apply_workspace_edit(edit, Some(&versions), window, cx)
                 });

@@ -1,6 +1,17 @@
 use super::*;
 use gpui_kit::component::menu::DropdownMenu;
 impl Workspace {
+    pub(super) fn reveal_source(
+        &mut self,
+        _: &crate::RevealSource,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.tabs.is_empty() {
+            cx.reveal_path(&self.root.join(&self.documents[self.active].path));
+        }
+    }
+
     pub(crate) fn prepare_to_leave(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.export_busy {
             self.export_message = Some("Finishing PDF export…".into());
@@ -116,6 +127,7 @@ impl Workspace {
         }
         self.export_busy = true;
         self.export_message = None;
+        self.export_path = None;
         let library = crate::invoice::is_library_document(&self.root, &self.entry);
         let suggested = format!(
             "{}.pdf",
@@ -181,6 +193,7 @@ impl Workspace {
                         .await;
                     let _ = this.update(cx, |this, cx| {
                         this.export_busy = false;
+                        this.export_path = Some(path.clone());
                         this.export_message = Some(match outcome {
                             Ok(()) => format!("PDF saved to {}", path.display()),
                             Err(error) => format!("PDF retained at {}; {error}", path.display()),

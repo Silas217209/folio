@@ -3,17 +3,18 @@ use gpui_kit::component::{
     menu::{DropdownMenu, PopupMenuItem},
     tab::{Tab, TabBar},
 };
-pub(super) fn message(text: &str, error: bool) -> impl IntoElement {
-    div()
+pub(super) fn message(text: &str, error: bool) -> Div {
+    h_flex()
         .mx_8()
         .mb_3()
         .px_4()
         .py_3()
         .rounded_md()
+        .gap_3()
         .bg(if error { rgb(0xfff2ec) } else { rgb(0xedf6f2) })
         .text_size(px(12.))
         .text_color(if error { rgb(0x9a4c32) } else { rgb(0x2d6d5b) })
-        .child(text.to_owned())
+        .child(div().flex_1().min_w_0().child(text.to_owned()))
 }
 fn field(label: &str, id: &str, input: &Entity<InputState>) -> impl IntoElement {
     v_flex()

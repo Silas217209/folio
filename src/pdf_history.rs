@@ -74,6 +74,7 @@ impl Render for PdfHistory {
             })
             .children(self.versions.iter().map(|version| {
                 let preview = version.clone();
+                let reveal = version.pdf.clone();
                 let email = version.clone();
                 let share = version.clone();
                 let date = chrono::DateTime::parse_from_rfc3339(&version.exported_at)
@@ -126,6 +127,16 @@ impl Render for PdfHistory {
                                     }
                                 }
                             })),
+                    )
+                    .child(
+                        Button::new(("reveal-pdf-version", version.version as usize))
+                            .ghost()
+                            .small()
+                            .icon(IconName::FolderOpen)
+                            .tooltip(crate::runtime::reveal_label())
+                            // Revealing also helps locate an externally changed
+                            // PDF, so do not require archive verification here.
+                            .on_click(move |_, _, cx| cx.reveal_path(&reveal)),
                     )
                     .child(
                         Button::new(("email-pdf-version", version.version as usize))

@@ -6,6 +6,14 @@ use std::{
 
 pub const TINYMIST_VERSION: &str = "0.15.10";
 
+pub fn reveal_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Show in Finder"
+    } else {
+        "Show in file manager"
+    }
+}
+
 pub fn shortcut(label: &str) -> String {
     if cfg!(target_os = "macos") {
         label

@@ -392,7 +392,7 @@ fn run(
             }
         }
     });
-    let settings = json!({
+    let mut settings = json!({
         "rootPath": root, "exportPdf": "never",
         "formatterMode": "typstyle", "semanticTokens": "disable"
     });
@@ -441,6 +441,11 @@ fn run(
                         return Ok(());
                     }
                     Request::Notify(method, params) => {
+                        if method == "workspace/didChangeConfiguration"
+                            && let Some(updated) = params["settings"].as_object()
+                        {
+                            settings.as_object_mut().unwrap().extend(updated.clone());
+                        }
                         write_message(
                             &mut input,
                             json!({ "jsonrpc": "2.0", "method": method, "params": params }),

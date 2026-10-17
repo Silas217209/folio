@@ -120,11 +120,22 @@ references, rename, and formatting. Settings control Vim mode, autosave, wrappin
 font size, indentation, line numbers, and source following. Standard application
 shortcuts use Control on Linux and Command on macOS; Vim keeps its Control keys.
 
+Right-click the source and choose **Format document**, or press **Ctrl+Shift+I**
+(**Cmd+Shift+I** on macOS, also under **Edit → Format Document**). Tinymist formats
+the whole document with typstyle using the indentation width from Settings.
+Formatting is undoable and follows the usual autosave behavior. Vim also supports
+`:format`.
+
 **Export PDF** freezes the source and shared files, compiles the snapshot, and
 creates a new version under `pdf/<Type>/`. Earlier PDFs are never overwritten.
 The history stores timestamps and SHA-256 checksums with a separate archived PDF
 and source snapshot. **Email PDF…** and **Share PDF…** hand off a retained export
 to the platform's composer or sharing service. Folio does not send mail itself.
+
+PDF versions and export confirmations offer **Show in Finder** on macOS or
+**Show in file manager** on Linux. The editor's right-click menu reveals the
+current source file; the library menus also reveal source files and open the
+library, templates, and PDF folders.
 
 Keep the entire library folder together when moving it to another computer,
 including `.folio/`. Keep the library outside the app bundle.

@@ -44,6 +44,7 @@ actions!(
         CloseTab,
         CloseProject,
         FormatDocument,
+        RevealSource,
         RenameSymbol,
         FindReferences,
         SignatureHelp,
@@ -94,6 +95,17 @@ fn macos_menus(cx: &mut App) {
             MenuItem::action("Save", Save),
             MenuItem::action("Export PDF…", ExportPdf),
             MenuItem::action("Close Document", CloseTab),
+        ]),
+        Menu::new("Edit").items([
+            MenuItem::action("Undo", gpui_kit::component::input::Undo),
+            MenuItem::action("Redo", Redo),
+            MenuItem::separator(),
+            MenuItem::action("Cut", gpui_kit::component::input::Cut),
+            MenuItem::action("Copy", gpui_kit::component::input::Copy),
+            MenuItem::action("Paste", gpui_kit::component::input::Paste),
+            MenuItem::action("Select All", gpui_kit::component::input::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("Format Document", FormatDocument),
         ]),
     ]);
 }

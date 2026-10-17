@@ -428,7 +428,7 @@ fn editor_lsp_completion_navigation_rename_diagnostics_and_formatting() {
             });
         });
         window.render_frame(cx);
-        window.press("ctrl-shift-i", cx);
+        window.press(crate::primary_key("ctrl-shift-i").as_ref(), cx);
     })
     .unwrap();
     wait_language(&mut app, &workspace, |view, cx| {
@@ -456,6 +456,52 @@ fn editor_lsp_completion_navigation_rename_diagnostics_and_formatting() {
                 .value()
                 .contains("#let value =")
         );
+    })
+    .unwrap();
+    // The mouse menu uses the same action as the shortcut and honors the
+    // indentation preference. Linux renders the native-menu fallback in tests.
+    #[cfg(target_os = "linux")]
+    {
+        let unformatted = "#let double(x) = {\nx*2\n}\n#double(2)\n";
+        app.update_window(handle, |_, window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.update_settings(|settings| settings.tab_width = 4, window, cx);
+                view.documents[0].editor.update(cx, |state, cx| {
+                    state.set_value(unformatted, window, cx);
+                    state.focus(window, cx);
+                });
+            });
+            window.render_frame(cx);
+            window.right_click("source-editor", cx);
+        })
+        .unwrap();
+        app.run_until_parked();
+        app.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.within("popup-menu").click(0, cx);
+        })
+        .unwrap();
+        wait_language(&mut app, &workspace, |view, cx| {
+            view.documents[0]
+                .editor
+                .read(cx)
+                .value()
+                .contains("\n    x * 2")
+        });
+        app.update_window(handle, |_, window, cx| {
+            window.press("ctrl-z", cx);
+            assert_eq!(
+                workspace.read(cx).documents[0]
+                    .editor
+                    .read(cx)
+                    .value()
+                    .as_ref(),
+                unformatted
+            );
+        })
+        .unwrap();
+    }
+    app.update_window(handle, |_, window, cx| {
         let editor = workspace.read(cx).documents[0].editor.clone();
         editor.update(cx, |state, cx| {
             let source = state.value().to_string();

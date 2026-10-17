@@ -186,6 +186,7 @@ pub(crate) struct Home {
     create_error: Option<String>,
     error: Option<String>,
     notice: Option<String>,
+    export_path: Option<PathBuf>,
     busy: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
@@ -261,6 +262,7 @@ impl Home {
             create_error: None,
             error,
             notice: None,
+            export_path: None,
             busy: None,
             _subscriptions: subscriptions,
         }
@@ -285,6 +287,8 @@ impl Home {
             anyhow::ensure!(root.is_dir(), "Choose a library folder");
             self.library.root = root;
             self.filter = None;
+            self.notice = None;
+            self.export_path = None;
             if let Some(path) = &self.config_path {
                 self.library.save(path)?;
             }
@@ -485,6 +489,7 @@ impl Home {
         self.busy = Some(record.identity.filename.clone());
         self.error = None;
         self.notice = None;
+        self.export_path = None;
         let root = self.library.root.clone();
         let entry = record.entry(&root);
         cx.spawn_in(window, async move |this, cx| {
@@ -507,6 +512,7 @@ impl Home {
                     let _ = this.update(cx, |this, cx| {
                         this.busy = None;
                         this.notice = Some(format!("Saved {}", version.pdf.display()));
+                        this.export_path = Some(version.pdf);
                         this.error = outcome.err().map(|e| format!("PDF retained; {e}"));
                         this.refresh(cx);
                     });
@@ -561,7 +567,20 @@ impl Render for Home {
                 view.child(ui::message(error, true))
             })
             .when_some(self.notice.as_ref(), |view, message| {
-                view.child(ui::message(message, false))
+                view.child(ui::message(message, false).when_some(
+                    self.export_path.as_ref(),
+                    |view, path| {
+                        let path = path.clone();
+                        view.child(
+                            Button::new("reveal-export")
+                                .ghost()
+                                .small()
+                                .icon(IconName::FolderOpen)
+                                .label(crate::runtime::reveal_label())
+                                .on_click(move |_, _, cx| cx.reveal_path(&path)),
+                        )
+                    },
+                ))
             })
             .child(self.documents(cx))
             .into_any_element()

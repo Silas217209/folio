@@ -64,6 +64,7 @@ pub struct Workspace {
     library_editor: bool,
     export_busy: bool,
     export_message: Option<String>,
+    export_path: Option<PathBuf>,
     closing_prompt: bool,
     command_sequence: u64,
     command_error: Option<String>,
@@ -405,6 +406,7 @@ impl Workspace {
             library_editor,
             export_busy: false,
             export_message: None,
+            export_path: None,
             closing_prompt: false,
             command_sequence: 0,
             command_error: None,
@@ -827,6 +829,7 @@ impl Workspace {
 
     fn editor_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active = &self.documents[self.active];
+        let editor = active.editor.clone();
         v_flex()
             .size_full()
             .min_w_0()
@@ -890,6 +893,8 @@ impl Workspace {
             })
             .child(
                 div()
+                    .id("source-editor")
+                    .test_support()
                     .flex_1()
                     .min_h_0()
                     .w_full()
@@ -898,6 +903,47 @@ impl Workspace {
                     .when(!self.tabs.is_empty(), |this| {
                         this.child(
                             Editor::new(&active.editor)
+                                .context_menu(move |menu, _, cx| {
+                                    use gpui_kit::component::input::{
+                                        Copy, Cut, GoToDefinition, Paste, SelectAll,
+                                        ToggleCodeActions,
+                                    };
+                                    let capabilities = editor.read(cx).context_menu_capabilities();
+                                    let editable = capabilities.is_editable();
+                                    menu.menu("Format document", Box::new(FormatDocument))
+                                        .separator()
+                                        .menu_with_disabled(
+                                            "Go to definition",
+                                            !capabilities.has_definition(),
+                                            Box::new(GoToDefinition),
+                                        )
+                                        .menu_with_disabled(
+                                            "Code actions",
+                                            !(editable && capabilities.has_code_actions()),
+                                            Box::new(ToggleCodeActions),
+                                        )
+                                        .menu("Rename symbol", Box::new(RenameSymbol))
+                                        .menu("Find references", Box::new(FindReferences))
+                                        .separator()
+                                        .menu_with_disabled(
+                                            "Cut",
+                                            !(editable && capabilities.is_copyable()),
+                                            Box::new(Cut),
+                                        )
+                                        .menu_with_disabled(
+                                            "Copy",
+                                            !capabilities.is_copyable(),
+                                            Box::new(Copy),
+                                        )
+                                        .menu_with_disabled("Paste", !editable, Box::new(Paste))
+                                        .separator()
+                                        .menu("Select all", Box::new(SelectAll))
+                                        .separator()
+                                        .menu(
+                                            crate::runtime::reveal_label(),
+                                            Box::new(crate::RevealSource),
+                                        )
+                                })
                                 .readonly(
                                     self.settings.vim_enabled
                                         && active.vim.mode != vim::Mode::Insert,
@@ -1110,6 +1156,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::close_active_tab))
             .on_action(cx.listener(Self::close_project))
             .on_action(cx.listener(Self::format_document))
+            .on_action(cx.listener(Self::reveal_source))
             .on_action(cx.listener(Self::rename_symbol))
             .on_action(cx.listener(Self::find_references))
             .on_action(cx.listener(Self::signature_help))
@@ -1183,6 +1230,17 @@ impl Render for Workspace {
                         .gap_2()
                         .text_size(px(12.))
                         .child(div().flex_1().child(message.clone()))
+                        .when_some(self.export_path.as_ref(), |view, path| {
+                            let path = path.clone();
+                            view.child(
+                                Button::new("reveal-export")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::FolderOpen)
+                                    .label(crate::runtime::reveal_label())
+                                    .on_click(move |_, _, cx| cx.reveal_path(&path)),
+                            )
+                        })
                         .child(
                             Button::new("dismiss-export-message")
                                 .ghost()
@@ -1190,6 +1248,7 @@ impl Render for Workspace {
                                 .icon(IconName::X)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.export_message = None;
+                                    this.export_path = None;
                                     cx.notify();
                                 })),
                         ),
