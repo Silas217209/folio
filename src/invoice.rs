@@ -245,7 +245,9 @@ pub fn pdfs(root: &Path) -> Result<Vec<PathBuf>> {
     for directory in directories {
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
-            if entry.file_type()?.is_file() && entry.path().extension().is_some_and(|s| s == "pdf")
+            if !entry.file_name().to_string_lossy().starts_with('.')
+                && entry.file_type()?.is_file()
+                && entry.path().extension().is_some_and(|s| s == "pdf")
             {
                 files.push(entry.path());
             }
@@ -270,7 +272,12 @@ fn reservations(root: &Path) -> Result<Vec<Reservation>> {
     let mut result = Vec::new();
     for entry in fs::read_dir(folder)? {
         let entry = entry?;
-        if entry.file_type()?.is_file() && entry.path().extension().is_some_and(|s| s == "json") {
+        // macOS creates binary ._<filename> AppleDouble sidecars on some volumes.
+        // They can share the JSON extension but are not number reservations.
+        if !entry.file_name().to_string_lossy().starts_with('.')
+            && entry.file_type()?.is_file()
+            && entry.path().extension().is_some_and(|s| s == "json")
+        {
             ensure!(
                 entry.metadata()?.len() < 64 * 1024,
                 "Number reservation exceeds 64 KB"
@@ -496,6 +503,59 @@ pub fn root_for_document(path: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn macos_metadata_sidecars_do_not_break_library_numbering() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        create_test_library(root).unwrap();
+        let template = templates(root)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.name == "Rechnung")
+            .unwrap();
+        let source = create(root, &template, "0042", "Design").unwrap();
+        let reservation = fs::read_dir(root.join(".folio/numbers"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        let sidecar = reservation
+            .path()
+            .with_file_name(format!("._{}", reservation.file_name().to_string_lossy()));
+        // AppleDouble magic and non-UTF-8 bytes, deliberately not valid JSON.
+        let metadata = b"\x00\x05\x16\x07\xff\xfe";
+        fs::write(&sidecar, metadata).unwrap();
+        for file in [
+            "templates/._Rechnung.typ",
+            "documents/Rechnung/._Rechnung_9999_Metadata.typ",
+            "pdf/._Rechnung_9999_Metadata.pdf",
+            "pdf/Rechnung/._Rechnung_9999_Metadata.pdf",
+        ] {
+            let path = root.join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, metadata).unwrap();
+        }
+        let pdf = root.join("pdf/Rechnung/Rechnung_0041_Export.pdf");
+        fs::write(&pdf, "Retained PDF").unwrap();
+        assert_eq!(templates(root).unwrap().len(), 2);
+        assert_eq!(scan(root).unwrap().len(), 1);
+        assert_eq!(pdfs(root).unwrap(), vec![pdf]);
+        assert_eq!(suggest_number(root, "Rechnung").unwrap(), "0043");
+        fs::remove_file(source).unwrap();
+        // Metadata is ignored, but real reservations still prevent number reuse.
+        assert!(create(root, &template, "0042", "Again").is_err());
+        create(root, &template, "0043", "Next invoice").unwrap();
+        assert_eq!(fs::read(sidecar).unwrap(), metadata);
+        assert_eq!(suggest_number(root, "Rechnung").unwrap(), "0044");
+
+        let damaged = root.join(".folio/numbers/damaged.json");
+        fs::write(&damaged, metadata).unwrap();
+        let error = suggest_number(root, "Rechnung").unwrap_err();
+        assert!(error.to_string().contains(&format!(
+            "Cannot read number reservation {}",
+            damaged.display()
+        )));
+    }
     #[test]
     fn structured_library_types_overrides_numbering_and_template_strings() {
         let temp = tempfile::tempdir().unwrap();
