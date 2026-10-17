@@ -126,7 +126,8 @@ PY
 
 # Catch architecture mismatches and accidental Homebrew/build-machine linkage.
 for binary in folio tinymist folio-share; do
-    lipo -verify_arch "$arch" "$app/Contents/MacOS/$binary"
+    # -verify_arch consumes all remaining arguments as architecture names.
+    lipo "$app/Contents/MacOS/$binary" -verify_arch "$arch"
 done
 python3 scripts/check-macos-bundle.py "$app" --check-linkage
 if [[ $target == "$host" ]]; then
