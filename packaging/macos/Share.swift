@@ -4,7 +4,7 @@ import AppKit
 // Arguments are passed directly, never interpolated into a script or shell.
 @MainActor
 final class SharingApp: NSObject, NSApplicationDelegate, NSWindowDelegate,
-    NSSharingServicePickerDelegate, NSSharingServiceDelegate {
+    @preconcurrency NSSharingServicePickerDelegate, NSSharingServiceDelegate {
     private var window: NSWindow!
     private var picker: NSSharingServicePicker?
     private var service: NSSharingService?
@@ -112,18 +112,27 @@ final class SharingApp: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
 }
 
-let arguments = CommandLine.arguments
-if arguments.count == 2 && arguments[1] == "--check" {
-    // Check the packaged executable without opening a native window.
-    print("Folio native sharing helper")
-    exit(0)
+@main
+enum SharingMain {
+    @MainActor
+    static func main() {
+        let arguments = CommandLine.arguments
+        if arguments.count == 2 && arguments[1] == "--check" {
+            // Check the packaged executable without opening a native window.
+            print("Folio native sharing helper")
+            return
+        }
+        guard arguments.count == 4, ["email", "share"].contains(arguments[1]) else {
+            FileHandle.standardError.write(Data("Usage: folio-share email|share PDF SUBJECT\n".utf8))
+            exit(2)
+        }
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let delegate = SharingApp(mode: arguments[1], file: URL(fileURLWithPath: arguments[2]), subject: arguments[3])
+        app.delegate = delegate
+        // NSApplication holds its delegate weakly. Retain it for the run loop.
+        withExtendedLifetime(delegate) {
+            app.run()
+        }
+    }
 }
-guard arguments.count == 4, ["email", "share"].contains(arguments[1]) else {
-    fputs("Usage: folio-share email|share PDF SUBJECT\n", stderr)
-    exit(2)
-}
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-let delegate = SharingApp(mode: arguments[1], file: URL(fileURLWithPath: arguments[2]), subject: arguments[3])
-app.delegate = delegate
-app.run()

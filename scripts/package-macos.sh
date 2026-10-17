@@ -76,7 +76,7 @@ cargo build --locked --release --target "$target" --bin folio
 app="$output/Folio.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/ThirdParty"
 cp "$target_dir/$target/release/folio" "$app/Contents/MacOS/folio"
-xcrun swiftc -O -swift-version 5 -target "$arch-apple-macos$MACOSX_DEPLOYMENT_TARGET" \
+xcrun swiftc -O -parse-as-library -swift-version 5 -target "$arch-apple-macos$MACOSX_DEPLOYMENT_TARGET" \
     -framework AppKit packaging/macos/Share.swift -o "$app/Contents/MacOS/folio-share"
 
 tinymist_version=$(sed -n 's/^pub const TINYMIST_VERSION: &str = "\([^"]*\)";/\1/p' src/runtime.rs)
